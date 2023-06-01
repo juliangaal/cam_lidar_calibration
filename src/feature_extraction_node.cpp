@@ -25,7 +25,7 @@ int main(int argc, char** argv)
 
     while (ros::ok())
     {
-        if (feature_extractor.import_samples) 
+        if (feature_extractor.importSamples())
         {
             actionlib::SimpleActionClient<cam_lidar_calibration::RunOptimiseAction> action_client("run_optimise", true);
             action_client.waitForServer();
@@ -34,8 +34,17 @@ int main(int argc, char** argv)
             break;
         }
 
-        feature_extractor.visualiseBoundedCloud();
-        feature_extractor.visualiseSamples();
+        if (feature_extractor.initialized())
+        {
+            feature_extractor.extractRegionOfInterest();
+            feature_extractor.visualiseBoundedCloud();
+            feature_extractor.visualiseSamples();
+        }
+        else
+        {
+            ROS_WARN_THROTTLE(1, "Not initialized!");
+        }
+
         loop_rate.sleep();
     }
     return 0;

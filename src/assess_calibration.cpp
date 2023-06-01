@@ -233,48 +233,51 @@ class AssessCalibration {
                 if(pcl::io::loadPCDFile<pcl::PointXYZIR> (pcd_path, *og_cloud) == -1)
                 {
                     ROS_FATAL_STREAM("Could not read pcd file, check if pcd file exists at: " << pcd_path);
-                } else {
-                    sensor_msgs::PointCloud2 cloud_msg;
-                    pcl::toROSMsg(*og_cloud, cloud_msg);
+                }
 
-                    sensor_msgs::PointCloud2 cloud_tf;
-                    tf2::doTransform(cloud_msg, cloud_tf, tf_msg);
-                    pcl::fromROSMsg(cloud_tf, *cloud);
+                sensor_msgs::PointCloud2 cloud_msg;
+                pcl::toROSMsg(*og_cloud, cloud_msg);
 
-                    if ( cloud->points.size() ) {
-                        
-                        for (pcl::PointCloud<pcl::PointXYZIR>::const_iterator it = cloud->begin(); it != cloud->end(); it++) {
-                            double tmpxC = it->x / it->z;
-                            double tmpyC = it->y / it->z;
-                            double tmpzC = it->z;
-                            double dis = pow(it->x * it->x + it->y * it->y + it->z * it->z, 0.5);
-                            cv::Point2d planepointsC;
-                            int range = std::min(round((dis / 30.0) * 49), 49.0);
+                sensor_msgs::PointCloud2 cloud_tf;
+                tf2::doTransform(cloud_msg, cloud_tf, tf_msg);
+                pcl::fromROSMsg(cloud_tf, *cloud);
 
-                            // Applying the distortion
-                            double r2 = tmpxC * tmpxC + tmpyC * tmpyC;
-                            double r1 = pow(r2, 0.5);
-                            double a0 = std::atan(r1);
-                            double a1;
-                            a1 = a0 * (1 + distcoeff.at<double>(0) * pow(a0, 2) + distcoeff.at<double>(1) * pow(a0, 4) +
-                                    distcoeff.at<double>(2) * pow(a0, 6) + distcoeff.at<double>(3) * pow(a0, 8));
-                            planepointsC.x = (a1 / r1) * tmpxC;
-                            planepointsC.y = (a1 / r1) * tmpyC;
+                if (cloud->points.empty())
+                {
+                    ROS_FATAL_STREAM("After converting into lidar frame, no points left!");
+                }
 
-                            planepointsC.x = cameramat.at<double>(0, 0) * planepointsC.x + cameramat.at<double>(0, 2);
-                            planepointsC.y = cameramat.at<double>(1, 1) * planepointsC.y + cameramat.at<double>(1, 2);
+                for (const auto& p: *cloud) {
+                    double tmpxC = p.x / p.z;
+                    double tmpyC = p.y / p.z;
+                    double tmpzC = p.z;
+                    double dis = pow(p.x * p.x + p.y * p.y + p.z * p.z, 0.5);
+                    cv::Point2d planepointsC;
+                    int range = std::min(round((dis / 30.0) * 49), 49.0);
 
-                            if (planepointsC.y >= 0 and planepointsC.y < height and planepointsC.x >= 0 and planepointsC.x < width and
-                                tmpzC >= 0 and std::abs(tmpxC) <= 1.35) {
+                    // Applying the distortion
+                    double r2 = tmpxC * tmpxC + tmpyC * tmpyC;
+                    double r1 = pow(r2, 0.5);
+                    double a0 = std::atan(r1);
+                    double a1;
+                    a1 = a0 * (1 + distcoeff.at<double>(0) * pow(a0, 2) + distcoeff.at<double>(1) * pow(a0, 4) +
+                            distcoeff.at<double>(2) * pow(a0, 6) + distcoeff.at<double>(3) * pow(a0, 8));
+                    planepointsC.x = (a1 / r1) * tmpxC;
+                    planepointsC.y = (a1 / r1) * tmpyC;
 
-                                int point_size = 2;
-                                cv::circle(image,
-                                    cv::Point(planepointsC.x, planepointsC.y), point_size,
-                                    CV_RGB(255 * colmap[50-range][0], 255 * colmap[50-range][1], 255 * colmap[50-range][2]), -1);
-                            }
-                        }
+                    planepointsC.x = cameramat.at<double>(0, 0) * planepointsC.x + cameramat.at<double>(0, 2);
+                    planepointsC.y = cameramat.at<double>(1, 1) * planepointsC.y + cameramat.at<double>(1, 2);
+
+                    if (planepointsC.y >= 0 and planepointsC.y < height and planepointsC.x >= 0 and planepointsC.x < width and
+                        tmpzC >= 0 and std::abs(tmpxC) <= 1.35) {
+
+                        int point_size = 2;
+                        cv::circle(image,
+                            cv::Point(planepointsC.x, planepointsC.y), point_size,
+                            CV_RGB(255 * colmap[50-range][0], 255 * colmap[50-range][1], 255 * colmap[50-range][2]), -1);
                     }
                 }
+
                 ROS_INFO_STREAM("Projecting points onto image for pose #" << (visualise_pose_num));
                 compute_reprojection(sample_list[visualise_pose_num-1], cam_project, lidar_project);
                 for (auto& point : cam_project)
@@ -369,7 +372,7 @@ class AssessCalibration {
             cam_centre_3d.push_back(sample.camera_centre);
             lidar_centre_3d.push_back(lidar_centre_camera_frame);
 
-            // ROS_INFO_STREAM("Camera distortion model = " << distortion_model);
+            ROS_INFO_STREAM("Camera distortion model = " << distortion_model);
             std::vector<cv::Point2d> cam_dist, lidar_dist;
 
             if (distortion_model == "fisheye")

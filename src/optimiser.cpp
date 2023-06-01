@@ -311,7 +311,7 @@ namespace cam_lidar_calibration
             sets.push_back(set);
             return;
         }
-        for (int i = offset; i <= samples.size() - k; ++i) {
+        for (size_t i = offset; i <= samples.size() - k; ++i) {
             set.push_back(samples[i]);
             generate_sets(i+1, k-1, set, samples);
             set.pop_back();

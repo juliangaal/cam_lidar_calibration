@@ -10,7 +10,7 @@
 #include <opencv2/opencv.hpp>
 #include <ros/ros.h>
 
-#include "cam_lidar_calibration/load_params.h"
+#include "cam_lidar_calibration/params.h"
 #include "cam_lidar_calibration/openga.h"
 
 namespace cam_lidar_calibration
