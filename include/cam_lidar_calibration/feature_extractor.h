@@ -64,12 +64,15 @@ namespace cam_lidar_calibration
         void passthrough(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &input_pc,
                          pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
 
-        std::tuple<std::vector<cv::Point3d>, cv::Mat> extractChessboard(const cv_bridge::CvImageConstPtr &cv_pt);
+        std::tuple<std::vector<cv::Point3d>, cv::Mat>
+        extractChessboard(const sensor_msgs::Image::ConstPtr &image);
 
-        auto chessboardProjection(const std::vector<cv::Point2d> &corners,
-                                  const cv_bridge::CvImageConstPtr &cv_ptr);
+        std::tuple<cv::Mat, cv::Mat, std::vector<cv::Point3d>>
+        chessboardProjection(const std::vector<cv::Point2d> &corners);
 
         void publishBoardPointCloud();
+
+        void publishChessboard();
 
         std::tuple<pcl::PointCloud<pcl::PointXYZIR>::Ptr, cv::Point3d>
         extractBoard(const pcl::PointCloud<pcl::PointXYZIR>::Ptr &cloud, OptimisationSample &sample);
@@ -80,11 +83,11 @@ namespace cam_lidar_calibration
         void setCameraInfo(const sensor_msgs::CameraInfo::ConstPtr &msg);
 
         void distoffsetPassthrough(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &input_pc,
-                              pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
+                                   pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
 
         bool getLastCloud(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &out);
 
-        bool getLastData(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_out, cv_bridge::CvImageConstPtr &img_out);
+        bool getLastData(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_out, sensor_msgs::Image::ConstPtr &img_out);
 
         void setLastData(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_in,
                          const sensor_msgs::Image::ConstPtr &img_in);
@@ -101,7 +104,8 @@ namespace cam_lidar_calibration
         std::string lidar_frame_;
         std::shared_ptr<std::mutex> last_data_mutex_;
         pcl::PointCloud<pcl::PointXYZIR>::ConstPtr last_pcl_;
-        cv_bridge::CvImageConstPtr last_img_;
+        sensor_msgs::Image::ConstPtr last_img_;
+        cv::Mat last_normal_;
         std::shared_ptr<std::atomic<int>> flag_;
         cam_lidar_calibration::boundsConfig bounds_;
         std::shared_ptr<image_sub_type> image_sub_;
@@ -110,6 +114,7 @@ namespace cam_lidar_calibration
         int num_samples_;
         bool valid_camera_info_;
         std::vector<pcl::PointCloud<pcl::PointXYZIR>::Ptr> pc_samples_;
+        cv::Mat chessboard_sample_;
         ros::Publisher board_cloud_pub_, bounded_cloud_pub_;
         ros::Publisher samples_pub_;
         image_transport::Publisher image_publisher_;

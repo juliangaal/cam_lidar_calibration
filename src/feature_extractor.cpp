@@ -59,6 +59,8 @@ namespace cam_lidar_calibration
         valid_camera_info_ = false;
         i_params_.cameramat = cv::Mat::zeros(3, 3, CV_64F);
         i_params_.distcoeff = cv::Mat::eye(1, 4, CV_64F);
+        num_samples_ = 0;
+        last_normal_ = cv::Mat{};
 
         // Create folder for output if it does not exist
         curdatetime_ = getDateTime();
@@ -172,11 +174,15 @@ namespace cam_lidar_calibration
                 break;
             case Optimise::Request::DISCARD:
                 ROS_INFO("Discarding last sample");
-                if (!optimiser_->samples.empty())
+                if (not optimiser_->samples.empty()) // TODO thread safety
                 {
                     num_samples_--;
+                    last_normal_ = cv::Mat{};
                     optimiser_->samples.pop_back();
-                    pc_samples_.pop_back();
+                    if (not pc_samples_.empty())
+                    {
+                        pc_samples_.pop_back();
+                    }
                 }
                 break;
         }
@@ -592,8 +598,8 @@ namespace cam_lidar_calibration
         pass.filter(*output_pc);
     }
 
-    auto FeatureExtractor::chessboardProjection(const std::vector<cv::Point2d> &corners,
-                                                const cv_bridge::CvImageConstPtr &cv_ptr)
+    std::tuple<cv::Mat, cv::Mat, std::vector<cv::Point3d>>
+    FeatureExtractor::chessboardProjection(const std::vector<cv::Point2d> &corners)
     {
         // Find the chessboard in 3D space - in it's own object frame (position is arbitrary, so we place it flat)
 
@@ -614,24 +620,20 @@ namespace cam_lidar_calibration
         // chessboard corners, middle square corners, board corners and centre
         std::vector<cv::Point3d> board_corners_3d;
         // Board corner coordinates from the centre of the chessboard
-        board_corners_3d.push_back(
-                cv::Point3d((i_params_.board_dimensions.width - i_params_.cb_translation_error.x) / 2.0,
-                            (i_params_.board_dimensions.height - i_params_.cb_translation_error.y) / 2.0, 0.0));
+        board_corners_3d.emplace_back((i_params_.board_dimensions.width - i_params_.cb_translation_error.x) / 2.0,
+                            (i_params_.board_dimensions.height - i_params_.cb_translation_error.y) / 2.0, 0.0);
 
-        board_corners_3d.push_back(
-                cv::Point3d(-(i_params_.board_dimensions.width + i_params_.cb_translation_error.x) / 2.0,
-                            (i_params_.board_dimensions.height - i_params_.cb_translation_error.y) / 2.0, 0.0));
+        board_corners_3d.emplace_back(-(i_params_.board_dimensions.width + i_params_.cb_translation_error.x) / 2.0,
+                            (i_params_.board_dimensions.height - i_params_.cb_translation_error.y) / 2.0, 0.0);
 
-        board_corners_3d.push_back(
-                cv::Point3d(-(i_params_.board_dimensions.width + i_params_.cb_translation_error.x) / 2.0,
-                            -(i_params_.board_dimensions.height + i_params_.cb_translation_error.y) / 2.0, 0.0));
+        board_corners_3d.emplace_back(-(i_params_.board_dimensions.width + i_params_.cb_translation_error.x) / 2.0,
+                            -(i_params_.board_dimensions.height + i_params_.cb_translation_error.y) / 2.0, 0.0);
 
-        board_corners_3d.push_back(
-                cv::Point3d((i_params_.board_dimensions.width - i_params_.cb_translation_error.x) / 2.0,
-                            -(i_params_.board_dimensions.height + i_params_.cb_translation_error.y) / 2.0, 0.0));
+        board_corners_3d.emplace_back((i_params_.board_dimensions.width - i_params_.cb_translation_error.x) / 2.0,
+                            -(i_params_.board_dimensions.height + i_params_.cb_translation_error.y) / 2.0, 0.0);
         // Board centre coordinates from the centre of the chessboard (due to incorrect placement of chessboard on board)
-        board_corners_3d.push_back(
-                cv::Point3d(-i_params_.cb_translation_error.x / 2.0, -i_params_.cb_translation_error.y / 2.0, 0.0));
+        board_corners_3d.emplace_back(-i_params_.cb_translation_error.x / 2.0,
+                                      -i_params_.cb_translation_error.y / 2.0, 0.0);
 
         std::vector<cv::Point2d> inner_cbcorner_pixels, board_image_pixels;
         cv::Mat rvec(3, 3, cv::DataType<double>::type);  // Initialization for pinhole and fisheye cameras
@@ -665,25 +667,25 @@ namespace cam_lidar_calibration
         {
             if (i == 0)
             {
-                cv::circle(cv_ptr->image, board_image_pixels[i], 10, CV_RGB(255, 0, 0), -1);
+                cv::circle(chessboard_sample_, board_image_pixels[i], 10, CV_RGB(255, 0, 0), -1);
             } else if (i == 1)
             {
-                cv::circle(cv_ptr->image, board_image_pixels[i], 10, CV_RGB(0, 255, 0), -1);
+                cv::circle(chessboard_sample_, board_image_pixels[i], 10, CV_RGB(0, 255, 0), -1);
             } else if (i == 2)
             {
-                cv::circle(cv_ptr->image, board_image_pixels[i], 10, CV_RGB(0, 0, 255), -1);
+                cv::circle(chessboard_sample_, board_image_pixels[i], 10, CV_RGB(0, 0, 255), -1);
             } else if (i == 3)
             {
-                cv::circle(cv_ptr->image, board_image_pixels[i], 10, CV_RGB(255, 255, 0), -1);
+                cv::circle(chessboard_sample_, board_image_pixels[i], 10, CV_RGB(255, 255, 0), -1);
             } else if (i == 4)
             {
-                cv::circle(cv_ptr->image, board_image_pixels[i], 10, CV_RGB(0, 255, 255), -1);
+                cv::circle(chessboard_sample_, board_image_pixels[i], 10, CV_RGB(0, 255, 255), -1);
             }
         }
 
         for (const auto &point: inner_cbcorner_pixels)
         {
-            cv::circle(cv_ptr->image, point, 10, CV_RGB(255, 0, 0), -1);
+            cv::circle(chessboard_sample_, point, 10, CV_RGB(255, 0, 0), -1);
         }
 
         double pixdiagonal = sqrt(pow(inner_cbcorner_pixels.front().x - inner_cbcorner_pixels.back().x, 2) +
@@ -693,16 +695,18 @@ namespace cam_lidar_calibration
         metreperpixel_cbdiag_ = len_diagonal / (1000 * pixdiagonal);
 
         // Return all the necessary coefficients
-        return std::make_tuple(rvec, tvec, board_corners_3d);
+        return { rvec, tvec, board_corners_3d };
     }
 
     std::tuple<std::vector<cv::Point3d>, cv::Mat>
-    FeatureExtractor::extractChessboard(const cv_bridge::CvImageConstPtr &cv_ptr)
+    FeatureExtractor::extractChessboard(const sensor_msgs::Image::ConstPtr &image)
     {
-        ROS_ASSERT(not cv_ptr->image.empty());
+        auto cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
+        chessboard_sample_ = cv_ptr->image.clone();
+        ROS_ASSERT(not chessboard_sample_.empty());
 
         cv::Mat gray;
-        cv::cvtColor(cv_ptr->image, gray, cv::COLOR_BGR2GRAY);
+        cv::cvtColor(chessboard_sample_, gray, cv::COLOR_BGR2GRAY);
         std::vector<cv::Point2f> cornersf;
         std::vector<cv::Point2d> corners;
         // Find chessboard pattern in the image
@@ -713,7 +717,7 @@ namespace cam_lidar_calibration
         {
             std::vector<cv::Point3d> empty_corners;
             cv::Mat empty_normal;
-            return std::make_tuple(empty_corners, empty_normal);
+            return { empty_corners, empty_normal };
         }
 
         // Find corner points with sub-pixel accuracy
@@ -726,7 +730,7 @@ namespace cam_lidar_calibration
             corners.push_back(cv::Point2d(corner));
         }
 
-        auto [rvec, tvec, board_corners_3d] = chessboardProjection(corners, cv_ptr);
+        auto [rvec, tvec, board_corners_3d] = chessboardProjection(corners);
 
         cv::Mat rmat;
         cv::Rodrigues(rvec, rmat);
@@ -740,17 +744,17 @@ namespace cam_lidar_calibration
             corner_vectors.emplace_back(m);
         }
 
-        // Publish the image with all the features marked in it
-        ROS_INFO("Publishing chessboard image");
-        image_publisher_.publish(cv_ptr->toImageMsg());
-
-        return std::make_tuple(corner_vectors, chessboard_normal);
+        return { corner_vectors, chessboard_normal };
     }
 
     std::tuple<pcl::PointCloud<pcl::PointXYZIR>::Ptr, cv::Point3d>
     FeatureExtractor::extractBoard(const PointCloud::Ptr &cloud, OptimisationSample &sample)
     {
-        ROS_ASSERT(not cloud->points.empty());
+        if (cloud->points.empty())
+        {
+            ROS_WARN("No points left after filtering! Please adapt parameters!");
+            return { cloud, cv::Point3d{} };
+        }
 
         PointCloud::Ptr cloud_filtered(new PointCloud);
         // Filter out the board point cloud
@@ -784,8 +788,8 @@ namespace cam_lidar_calibration
 
         if (cloud_filtered->points.empty())
         {
-            ROS_WARN("No points left after filtering! Please adapt parameters!");
-            return std::make_tuple(cloud_filtered, cv::Point3d{});
+            ROS_WARN("No points left after segmentation! Please adapt parameters!");
+            return { cloud_filtered, cv::Point3d{} };
         }
 
         // Check that segmentation succeeded
@@ -794,7 +798,7 @@ namespace cam_lidar_calibration
         {
             ROS_WARN("Chessboard plane segmentation failed");
             cv::Point3d null_normal;
-            return std::make_tuple(cloud_projected, null_normal);
+            return { cloud_projected, null_normal };
         }
 
         // Plane normal vector magnitude
@@ -809,10 +813,7 @@ namespace cam_lidar_calibration
         proj.setModelCoefficients(coefficients);
         proj.filter(*cloud_projected);
 
-
-        // Publish the projected inliers
-        pc_samples_.push_back(cloud_projected);
-        return std::make_tuple(cloud_projected, lidar_normal);
+        return { cloud_projected, lidar_normal };
     }
 
     std::pair<pcl::ModelCoefficients, pcl::ModelCoefficients>
@@ -832,7 +833,7 @@ namespace cam_lidar_calibration
         // Failed RANSAC returns empty coeffs
         if (full_coeff.values.empty())
         {
-            return std::make_pair(full_coeff, full_coeff);
+            return { full_coeff, full_coeff };
         }
 
         pcl::ExtractIndices<pcl::PointXYZIR> extract;
@@ -846,7 +847,7 @@ namespace cam_lidar_calibration
         // Failed RANSAC returns empty coeffs
         if (half_coeff.values.empty())
         {
-            return std::make_pair(half_coeff, half_coeff);
+            return { half_coeff, half_coeff };
         }
 
         // Fitting line2 through outlier points
@@ -856,10 +857,10 @@ namespace cam_lidar_calibration
         pcl::getMinMax3D(*half_cloud, half_min, half_max);
         if (full_max.z > half_max.z)
         {
-            return std::make_pair(full_coeff, half_coeff);
+            return { full_coeff, half_coeff };
         } else
         {
-            return std::make_pair(half_coeff, full_coeff);
+            return { half_coeff, full_coeff };
         }
     }
 
@@ -953,10 +954,10 @@ namespace cam_lidar_calibration
         if (*flag_ == Optimise::Request::CAPTURE)
         {
             PointCloud::ConstPtr pointcloud(new PointCloud);
-            cv_bridge::CvImageConstPtr image(new cv_bridge::CvImage);
+            sensor_msgs::Image::ConstPtr image(new sensor_msgs::Image);
             if (not getLastData(pointcloud, image))
             {
-                ROS_WARN("No data captured. Last pointcloud or image is unitialized");
+                ROS_WARN("No (new) data captured.");
                 return;
             };
 
@@ -964,12 +965,20 @@ namespace cam_lidar_calibration
             distoffsetPassthrough(pointcloud, cloud_bounded);
 
             ROS_INFO("Processing sample");
+
             auto [corner_vectors, chessboard_normal] = extractChessboard(image);
             if (corner_vectors.empty())
             {
                 *flag_ = Optimise::Request::READY;
                 ROS_ERROR("Sample capture failed: can't detect chessboard in camera image");
                 ROS_INFO("Ready to capture");
+                return;
+            }
+
+            if (num_samples_ > 0 && cv::countNonZero(chessboard_normal - last_normal_) == 0)
+            {
+                *flag_ = Optimise::Request::READY;
+                ROS_WARN_STREAM("Not adding duplicate data. Listening for new data");
                 return;
             }
 
@@ -986,11 +995,11 @@ namespace cam_lidar_calibration
             if (cloud_projected->points.empty())
             {
                 ROS_ERROR("RANSAC unsuccessful, discarding sample - Need more lidar points on board");
-                if (not pc_samples_.empty()) pc_samples_.pop_back();
                 *flag_ = Optimise::Request::READY;
                 ROS_INFO("Ready to capture");
                 return;
             }
+
             sample.lidar_normal = lidar_normal;
 
             // First: Sort out the points in the point cloud according to their ring numbers
@@ -1029,7 +1038,6 @@ namespace cam_lidar_calibration
                 || bottom_left.values.empty() || bottom_right.values.empty())
             {
                 ROS_ERROR("RANSAC unsuccessful, discarding sample - Need more lidar points on board");
-                if (not pc_samples_.empty()) pc_samples_.pop_back();
                 *flag_ = Optimise::Request::READY;
                 ROS_INFO("Ready for capture");
                 return;
@@ -1121,6 +1129,26 @@ namespace cam_lidar_calibration
             double distance = sqrt(pow(sample.lidar_centre.x / 1000 - 0, 2) + pow(sample.lidar_centre.y / 1000 - 0, 2) +
                                    pow(sample.lidar_centre.z / 1000 - 0, 2));
             sample.distance_from_origin = distance;
+
+            // If the lidar board dim is more than 10% of the measured, then reject sample
+            if (abs(w0 - i_params_.board_dimensions.width) > i_params_.board_dimensions.width * 0.1 ||
+                abs(w1 - i_params_.board_dimensions.width) > i_params_.board_dimensions.width * 0.1 ||
+                abs(h0 - i_params_.board_dimensions.height) > i_params_.board_dimensions.height * 0.1 ||
+                abs(h1 - i_params_.board_dimensions.height) > i_params_.board_dimensions.height * 0.1)
+            {
+                ROS_ERROR("Plane fitting error, LiDAR board dimensions incorrect; Try capturing again");
+                *flag_ = Optimise::Request::READY;
+                ROS_INFO("Ready for capture\n");
+                return;
+            }
+
+            ROS_INFO("Found line coefficients and outlined chessboard");
+            last_normal_ = chessboard_normal;
+            num_samples_++;
+            pc_samples_.push_back(cloud_projected);
+            publishBoardPointCloud();
+            publishChessboard();
+
             printf("\n--- Sample %d ---\n", num_samples_);
             printf("Measured board has: dimensions = %dx%d mm; area = %6.5f m^2\n", i_params_.board_dimensions.width,
                    i_params_.board_dimensions.height, gt_area);
@@ -1133,25 +1161,6 @@ namespace cam_lidar_calibration
                    (w0 + w1) / 2 - i_params_.board_dimensions.width);
             printf("Board dim        = %6.2f,%6.2f,%6.2f,%6.2f mm\n", w0, h0, h1, w1);
             printf("Board dim error  = %7.2f\n\n", be_dim_err);
-
-            // If the lidar board dim is more than 10% of the measured, then reject sample
-            if (abs(w0 - i_params_.board_dimensions.width) > i_params_.board_dimensions.width * 0.1 ||
-                abs(w1 - i_params_.board_dimensions.width) > i_params_.board_dimensions.width * 0.1 ||
-                abs(h0 - i_params_.board_dimensions.height) > i_params_.board_dimensions.height * 0.1 ||
-                abs(h1 - i_params_.board_dimensions.height) > i_params_.board_dimensions.height * 0.1)
-            {
-                ROS_ERROR(
-                        "Plane fitting error, LiDAR board dimensions incorrect; discarding sample - try capturing again");
-                if (not pc_samples_.empty()) pc_samples_.pop_back();
-                *flag_ = Optimise::Request::READY;
-                ROS_INFO("Ready for capture\n");
-                return;
-            }
-
-            ROS_INFO("Found line coefficients and outlined chessboard");
-            publishBoardPointCloud();
-
-            num_samples_++;
 
             // Save image
             if (fs::create_directory(newdatafolder_))
@@ -1166,7 +1175,7 @@ namespace cam_lidar_calibration
             fs::path target_pcd_filepath = newdatafolder_ / "pcd" / ("pose" + num_samples_str + "_target.pcd");
             fs::path full_pcd_filepath = newdatafolder_ / "pcd" / ("pose" + num_samples_str + "_full.pcd");
 
-            ROS_ASSERT(cv::imwrite(img_filepath, image->image));
+            ROS_ASSERT(cv::imwrite(img_filepath, cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8)->image));
             ROS_ASSERT(pcl::io::savePCDFileASCII(target_pcd_filepath, *cloud_bounded) != -1);
             ROS_ASSERT(pcl::io::savePCDFileASCII(full_pcd_filepath, *pointcloud) != -1);
             ROS_INFO_STREAM("Image and pcd file saved");
@@ -1255,7 +1264,7 @@ namespace cam_lidar_calibration
     bool FeatureExtractor::getLastCloud(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &out)
     {
         const std::lock_guard<std::mutex> lock(*last_data_mutex_);
-        if (last_pcl_ == nullptr)
+        if (not last_pcl_)
         {
             return false;
         }
@@ -1264,15 +1273,17 @@ namespace cam_lidar_calibration
     }
 
     bool FeatureExtractor::getLastData(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_out,
-                                       cv_bridge::CvImageConstPtr &img_out)
+                                       sensor_msgs::Image::ConstPtr &img_out)
     {
         const std::lock_guard<std::mutex> lock(*last_data_mutex_);
-        if (last_pcl_ == nullptr or last_img_ == nullptr)
+        if (not last_pcl_ or not last_img_)
         {
             return false;
         }
-        pc_out.reset(new PointCloud(*last_pcl_));
-        img_out.reset(new cv_bridge::CvImage(*last_img_));
+
+        pc_out = last_pcl_;
+        img_out = last_img_;
+
         return true;
     }
 
@@ -1292,12 +1303,17 @@ namespace cam_lidar_calibration
         }
     }
 
+    void FeatureExtractor::publishChessboard()
+    {
+        image_publisher_.publish(cv_bridge::CvImage(std_msgs::Header(), "bgr8", chessboard_sample_).toImageMsg());
+    }
+
     void FeatureExtractor::setLastData(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_in,
                                        const sensor_msgs::Image::ConstPtr &img_in)
     {
         const std::lock_guard<std::mutex> lock(*last_data_mutex_);
-        last_pcl_.reset(new PointCloud(*pc_in));
-        last_img_ = cv_bridge::toCvCopy(img_in, sensor_msgs::image_encodings::BGR8);
+        last_pcl_ = pc_in;
+        last_img_  = img_in;
     }
 
     bool FeatureExtractor::importSamples() const
@@ -1309,4 +1325,5 @@ namespace cam_lidar_calibration
     {
         return not lidar_frame_.empty() and valid_camera_info_;
     }
+
 }  // namespace cam_lidar_calibration
