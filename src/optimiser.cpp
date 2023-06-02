@@ -326,6 +326,8 @@ namespace cam_lidar_calibration
         current_set_ = set;
         std::vector<float> b_dims;
 
+        ROS_ASSERT(not set.empty());
+
         camera_centres_ = cv::Mat(current_set_.size(), 3, CV_64F);
         camera_normals_ = cv::Mat(current_set_.size(), 3, CV_64F);
         lidar_centres_ = cv::Mat(current_set_.size(), 3, CV_64F);
@@ -362,7 +364,7 @@ namespace cam_lidar_calibration
         float ln_cond_fro = cv::norm(lidar_normals_, cv::NORM_L2) * cv::norm(lidar_normals_.inv(), cv::NORM_L2);
 
         float cond_max = (cn_cond_fro > ln_cond_fro) ? cn_cond_fro : ln_cond_fro;
-        float b_avg = std::accumulate(std::begin(b_dims), std::end(b_dims), 0.0)/b_dims.size();
+        float b_avg = std::accumulate(std::begin(b_dims), std::end(b_dims), 0.0f) / b_dims.size();
 
         // variability of quality (voq)
         float voq = cond_max + b_avg;

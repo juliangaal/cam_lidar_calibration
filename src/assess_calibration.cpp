@@ -143,7 +143,7 @@ class AssessCalibration {
             distcoeff.at<double>(3) = D[3];
 
             param_msg = ros::topic::waitForMessage<std_msgs::Float64MultiArray>("/extrinsic_calib_param");
-            if(param_msg != NULL){
+            if(param_msg != nullptr){
                 param_msg_callback();
             }
         }
@@ -173,7 +173,6 @@ class AssessCalibration {
             tf_msg.transform.translation.z = transform.inverse().getOrigin().z();
             
             double r_val,y_val,p_val;
-            double d1,d2,d3;
             geometry_msgs::Quaternion q = tf_msg.transform.rotation;
             tf::Quaternion tfq;
             tf::quaternionMsgToTF(q, tfq);

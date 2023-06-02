@@ -42,7 +42,7 @@ int main(int argc, char** argv)
         }
         else
         {
-            ROS_WARN_THROTTLE(1, "Not initialized!");
+            ROS_WARN_THROTTLE(1, "Waiting for data. Publishing lidar? camera info?");
         }
 
         loop_rate.sleep();

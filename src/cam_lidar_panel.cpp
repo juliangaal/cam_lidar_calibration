@@ -70,8 +70,8 @@ namespace cam_lidar_calibration
             discard_button_->setEnabled(true);
             optimise_button_->setEnabled(true);
             auto result = action_client_.getResult();
-            auto t = result->transform.translation;
-            auto r = result->transform.rotation;
+//            auto t = result->transform.translation;
+//            auto r = result->transform.rotation;
             std::ostringstream os;
             os.precision(3);
             //    os << "Rotation - w: " << r.w << " x: " << r.x << " y: " << r.y << " z: " << r.z;

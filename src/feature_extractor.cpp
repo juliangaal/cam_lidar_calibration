@@ -56,6 +56,33 @@ namespace cam_lidar_calibration
         optimiser_ = std::make_shared<Optimiser>(i_params_);
         ROS_INFO("Input parameters loaded");
 
+        valid_camera_info_ = false;
+        i_params_.cameramat = cv::Mat::zeros(3, 3, CV_64F);
+        i_params_.distcoeff = cv::Mat::eye(1, 4, CV_64F);
+
+        // Create folder for output if it does not exist
+        curdatetime_ = getDateTime();
+
+        // Specify folder for saving samples
+        if (f_params_.import_samples)
+        {
+            newdatafolder_ = f_params_.import_path.parent_path();
+            ROS_ASSERT_MSG(fs::exists(f_params_.import_path) && fs::is_regular_file(f_params_.import_path),
+                           "Please state <path>/poses.csv file as import_path");
+            ROS_ASSERT_MSG(fs::exists(newdatafolder_) && fs::is_directory(newdatafolder_), "Folder doesn't exist!");
+            ROS_INFO_STREAM("Importing data from " << newdatafolder_);
+        } else
+        {
+            fs::path data_dir = fs::path(ros::package::getPath("cam_lidar_calibration")) / "data";
+            // Successful capture, store jpeg and pcd file
+            if (fs::create_directory(data_dir))
+            {
+                ROS_INFO_STREAM("Data save folder created at " << data_dir);
+            }
+            newdatafolder_ = data_dir / curdatetime_;
+            ROS_INFO_STREAM("Saving data in " << newdatafolder_);
+        }
+
         flag_.reset(new std::atomic<int>(0));
         last_data_mutex_.reset(new std::mutex());
         last_pcl_.reset(new PointCloud);
@@ -83,54 +110,21 @@ namespace cam_lidar_calibration
         samples_pub_ = private_nh_.advertise<visualization_msgs::MarkerArray>("collected_samples", 0);
         image_publisher_ = it_->advertise("camera_features", 1);
 
-        valid_camera_info = false;
-        i_params_.cameramat = cv::Mat::zeros(3, 3, CV_64F);
-        i_params_.distcoeff = cv::Mat::eye(1, 4, CV_64F);
-
-        i_params_.cameramat.at<double>(0, 0) = 2045.80830;
-        i_params_.cameramat.at<double>(0, 2) = 960.0703;
-        i_params_.cameramat.at<double>(1, 1) = 2045.3020201;
-        i_params_.cameramat.at<double>(1, 2) = 593.863;
-        i_params_.cameramat.at<double>(2, 2) = 1;
-
-        i_params_.distcoeff.at<double>(0) = -0.18695538536246667;
-        i_params_.distcoeff.at<double>(1) = 0.7033135084221054;
-        i_params_.distcoeff.at<double>(2) = -0.001101886242414108;
-        i_params_.distcoeff.at<double>(3) = -0.00012105824480937335;
-        i_params_.distcoeff.at<double>(4) = -2.160473658319914;
-
-        i_params_.image_size = std::make_pair(1920, 1200);
-
-        camera_info_sub_ = public_nh_.subscribe(i_params_.camera_info, 20, &FeatureExtractor::callback_camerainfo,
-                                                this);
-
-        // Create folder for output if it does not exist
-        curdatetime_ = getDateTime();
-
-        // Specify folder for saving samples
-        if (f_params_.import_samples)
+        auto camera_info = ros::topic::waitForMessage<sensor_msgs::CameraInfo>(i_params_.camera_info,
+                                                                               ros::Duration(5.0));
+        if (camera_info)
         {
-            newdatafolder_ = f_params_.import_path.parent_path();
-            ROS_ASSERT_MSG(fs::exists(f_params_.import_path) && fs::is_regular_file(f_params_.import_path), "Please state <path>/poses.csv file as import_path");
-            ROS_ASSERT_MSG(fs::exists(newdatafolder_)  && fs::is_directory(newdatafolder_), "Folder doesn't exist!");
-            ROS_INFO_STREAM("Importing data from " << newdatafolder_);
-        }
-        else
+            setCameraInfo(camera_info);
+            ROS_INFO_STREAM_ONCE("Initialized camera parameters");
+        } else
         {
-            fs::path data_dir = fs::path(ros::package::getPath("cam_lidar_calibration")) / "data";
-            // Successful capture, store jpeg and pcd file
-            if (fs::create_directory(data_dir))
-            {
-                ROS_INFO_STREAM("Data save folder created at " << data_dir);
-            }
-            newdatafolder_ = data_dir / curdatetime_;
-            ROS_INFO_STREAM("Saving data in " << newdatafolder_);
+            ROS_FATAL_STREAM("No camera params from topic " << i_params_.camera_info << " after 5 seconds timeout");
         }
 
-        ROS_INFO("Finished init cam_lidar_calibration");
+        ROS_INFO("Set initial cam_lidar_calibration parameters. Waiting for data.");
     }
 
-    void FeatureExtractor::callback_camerainfo(const sensor_msgs::CameraInfo::ConstPtr &msg)
+    void FeatureExtractor::setCameraInfo(const sensor_msgs::CameraInfo::ConstPtr &msg)
     {
 
         i_params_.cameramat.at<double>(0, 0) = msg->K[0];
@@ -158,7 +152,8 @@ namespace cam_lidar_calibration
         {
             ROS_FATAL_STREAM("Camera model " << msg->distortion_model << " not supported");
         }
-        valid_camera_info = true;
+
+        valid_camera_info_ = true;
     }
 
     bool FeatureExtractor::serviceCB(Optimise::Request &req, Optimise::Response &res)
@@ -267,8 +262,7 @@ namespace cam_lidar_calibration
 
             read_samples.close();
             ROS_INFO_STREAM(optimiser_->samples.size() << " samples imported");
-        }
-        else
+        } else
         {
 
             fs::path savesamplespath = newdatafolder_ / "poses.csv";
@@ -357,17 +351,18 @@ namespace cam_lidar_calibration
         int num_assessed = 0;
         std::vector<SetAssess> calib_list;
 
-        for (const auto &set: optimiser_->sets)
+        for (auto &sub_set: optimiser_->sets)
         {
             // Insert vector elements into matrix to compute analytical euler angles by matrix operations
             int row = 0;
-            auto camera_centres_ = cv::Mat(set.size(), 3, CV_64F);
-            auto camera_normals_ = cv::Mat(set.size(), 3, CV_64F);
-            auto lidar_centres_ = cv::Mat(set.size(), 3, CV_64F);
-            auto lidar_normals_ = cv::Mat(set.size(), 3, CV_64F);
+            auto camera_centres_ = cv::Mat(sub_set.size(), 3, CV_64F);
+            auto camera_normals_ = cv::Mat(sub_set.size(), 3, CV_64F);
+            auto lidar_centres_ = cv::Mat(sub_set.size(), 3, CV_64F);
+            auto lidar_normals_ = cv::Mat(sub_set.size(), 3, CV_64F);
             std::vector<float> be;
+            be.reserve(sub_set.size());
 
-            for (auto &sample: set)
+            for (auto &sample: sub_set)
             {
                 float err_dim = abs(sample.widths[0] - i_params_.board_dimensions.width) +
                                 abs(sample.widths[1] - i_params_.board_dimensions.width) +
@@ -386,7 +381,7 @@ namespace cam_lidar_calibration
                 row++;
             }
 
-            float b_avg = std::accumulate(std::begin(be), std::end(be), 0.0) / be.size();
+            float b_avg = std::accumulate(std::begin(be), std::end(be), 0.0f) / be.size();
 
             // Commutative property holds for AA^{-1} = A^{-1}A = I (in the case of a well conditioned matrix)
             float cn_cond_fro = cv::norm(camera_normals_, cv::NORM_L2) * cv::norm(camera_normals_.inv(), cv::NORM_L2);
@@ -396,7 +391,7 @@ namespace cam_lidar_calibration
 
             SetAssess new_set;
             new_set.voq = voq;
-            new_set.set = set;
+            new_set.set = sub_set;
 
             // calib_list is a list of size 50 that maintains the lowest VOQ values
             // by keeping track of its max element, and replacing that with the next lowest VOQ.
@@ -410,7 +405,6 @@ namespace cam_lidar_calibration
                 }
             } else
             {
-
                 // Compare new element with max element (which is the last element)
                 if (new_set.voq < calib_list.back().voq)
                 {
@@ -422,7 +416,7 @@ namespace cam_lidar_calibration
             num_assessed++;
         }
         // Populate the optimiser sets with the top sets
-        for (SetAssess sa: calib_list)
+        for (const SetAssess &sa: calib_list)
         {
             optimiser_->top_sets.push_back(sa.set);
         }
@@ -467,7 +461,6 @@ namespace cam_lidar_calibration
         ROS_INFO("====== END ======");
 
         ros::shutdown();
-        return;
 
         // // Not in use
         // RunOptimiseResult res;
@@ -652,7 +645,8 @@ namespace cam_lidar_calibration
             std::vector<cv::Point2d> corners_undistorted;
             cv::fisheye::undistortPoints(corners, corners_undistorted, i_params_.cameramat, i_params_.distcoeff,
                                          i_params_.cameramat);
-            cv::solvePnP(corners_3d, corners_undistorted, i_params_.cameramat, cv::noArray(), rvec, tvec);
+            cv::solvePnP(corners_3d, corners_undistorted, i_params_.cameramat, cv::noArray(), rvec, tvec, false,
+                         cv::SOLVEPNP_EPNP);
             cv::fisheye::projectPoints(corners_3d, inner_cbcorner_pixels, rvec, tvec, i_params_.cameramat,
                                        i_params_.distcoeff);
             cv::fisheye::projectPoints(board_corners_3d, board_image_pixels, rvec, tvec, i_params_.cameramat,
@@ -660,7 +654,8 @@ namespace cam_lidar_calibration
         } else
         {
             // Pinhole model
-            cv::solvePnP(corners_3d, corners, i_params_.cameramat, i_params_.distcoeff, rvec, tvec);
+            cv::solvePnP(corners_3d, corners, i_params_.cameramat, i_params_.distcoeff, rvec, tvec, false,
+                         cv::SOLVEPNP_EPNP);
             cv::projectPoints(corners_3d, rvec, tvec, i_params_.cameramat, i_params_.distcoeff, inner_cbcorner_pixels);
             cv::projectPoints(board_corners_3d, rvec, tvec, i_params_.cameramat, i_params_.distcoeff,
                               board_image_pixels);
@@ -688,7 +683,7 @@ namespace cam_lidar_calibration
 
         for (const auto &point: inner_cbcorner_pixels)
         {
-            cv::circle(cv_ptr->image, point, 3, CV_RGB(255, 0, 0), -1);
+            cv::circle(cv_ptr->image, point, 10, CV_RGB(255, 0, 0), -1);
         }
 
         double pixdiagonal = sqrt(pow(inner_cbcorner_pixels.front().x - inner_cbcorner_pixels.back().x, 2) +
@@ -702,18 +697,20 @@ namespace cam_lidar_calibration
     }
 
     std::tuple<std::vector<cv::Point3d>, cv::Mat>
-    FeatureExtractor::locateChessboard(const cv_bridge::CvImageConstPtr &cv_ptr)
+    FeatureExtractor::extractChessboard(const cv_bridge::CvImageConstPtr &cv_ptr)
     {
+        ROS_ASSERT(not cv_ptr->image.empty());
+
         cv::Mat gray;
-        cv::cvtColor(cv_ptr->image, gray, CV_BGR2GRAY);
+        cv::cvtColor(cv_ptr->image, gray, cv::COLOR_BGR2GRAY);
         std::vector<cv::Point2f> cornersf;
         std::vector<cv::Point2d> corners;
         // Find chessboard pattern in the image
+
         bool pattern_found = findChessboardCorners(gray, i_params_.chessboard_pattern_size, cornersf,
                                                    cv::CALIB_CB_ADAPTIVE_THRESH + cv::CALIB_CB_NORMALIZE_IMAGE);
         if (!pattern_found)
         {
-            ROS_WARN("No chessboard found");
             std::vector<cv::Point3d> empty_corners;
             cv::Mat empty_normal;
             return std::make_tuple(empty_corners, empty_normal);
@@ -740,18 +737,21 @@ namespace cam_lidar_calibration
         for (auto &corner: board_corners_3d)
         {
             cv::Mat m(rmat * cv::Mat(corner).reshape(1) + tvec);
-            corner_vectors.push_back(cv::Point3d(m));
+            corner_vectors.emplace_back(m);
         }
 
         // Publish the image with all the features marked in it
         ROS_INFO("Publishing chessboard image");
         image_publisher_.publish(cv_ptr->toImageMsg());
+
         return std::make_tuple(corner_vectors, chessboard_normal);
     }
 
     std::tuple<pcl::PointCloud<pcl::PointXYZIR>::Ptr, cv::Point3d>
     FeatureExtractor::extractBoard(const PointCloud::Ptr &cloud, OptimisationSample &sample)
     {
+        ROS_ASSERT(not cloud->points.empty());
+
         PointCloud::Ptr cloud_filtered(new PointCloud);
         // Filter out the board point cloud
         // find the point with max height(z val) in cloud_passthrough
@@ -932,9 +932,12 @@ namespace cam_lidar_calibration
             }
         }
 
-        lidar_frame_ = pointcloud->header.frame_id;
+        if (not initialized())
+        {
+            lidar_frame_ = pointcloud->header.frame_id;
+        }
 
-        ROS_INFO_STREAM_THROTTLE(1, "Receiving data" << i_params_.lidar_ring_count);
+        ROS_INFO_STREAM_THROTTLE(1, "Receiving data");
         setLastData(pointcloud, image);
     }
 
@@ -961,12 +964,12 @@ namespace cam_lidar_calibration
             distoffsetPassthrough(pointcloud, cloud_bounded);
 
             ROS_INFO("Processing sample");
-            auto [corner_vectors, chessboard_normal] = locateChessboard(image);
+            auto [corner_vectors, chessboard_normal] = extractChessboard(image);
             if (corner_vectors.empty())
             {
                 *flag_ = Optimise::Request::READY;
                 ROS_ERROR("Sample capture failed: can't detect chessboard in camera image");
-                ROS_INFO("Ready to capture sample");
+                ROS_INFO("Ready to capture");
                 return;
             }
 
@@ -984,9 +987,8 @@ namespace cam_lidar_calibration
             {
                 ROS_ERROR("RANSAC unsuccessful, discarding sample - Need more lidar points on board");
                 if (not pc_samples_.empty()) pc_samples_.pop_back();
-                if (num_samples_ > 0) num_samples_--;
                 *flag_ = Optimise::Request::READY;
-                ROS_INFO("Ready for capture\n");
+                ROS_INFO("Ready to capture");
                 return;
             }
             sample.lidar_normal = lidar_normal;
@@ -1028,9 +1030,8 @@ namespace cam_lidar_calibration
             {
                 ROS_ERROR("RANSAC unsuccessful, discarding sample - Need more lidar points on board");
                 if (not pc_samples_.empty()) pc_samples_.pop_back();
-                if (num_samples_ > 0) num_samples_--;
                 *flag_ = Optimise::Request::READY;
-                ROS_INFO("Ready for capture\n");
+                ROS_INFO("Ready for capture");
                 return;
             }
 
@@ -1142,7 +1143,6 @@ namespace cam_lidar_calibration
                 ROS_ERROR(
                         "Plane fitting error, LiDAR board dimensions incorrect; discarding sample - try capturing again");
                 if (not pc_samples_.empty()) pc_samples_.pop_back();
-                if (num_samples_ > 0) num_samples_--;
                 *flag_ = Optimise::Request::READY;
                 ROS_INFO("Ready for capture\n");
                 return;
@@ -1164,7 +1164,7 @@ namespace cam_lidar_calibration
             auto num_samples_str = std::to_string(num_samples_);
             fs::path img_filepath = newdatafolder_ / "images" / ("pose" + num_samples_str + ".png");
             fs::path target_pcd_filepath = newdatafolder_ / "pcd" / ("pose" + num_samples_str + "_target.pcd");
-            fs::path full_pcd_filepath = newdatafolder_  / "pcd" / ("pose" + num_samples_str + "_full.pcd");
+            fs::path full_pcd_filepath = newdatafolder_ / "pcd" / ("pose" + num_samples_str + "_full.pcd");
 
             ROS_ASSERT(cv::imwrite(img_filepath, image->image));
             ROS_ASSERT(pcl::io::savePCDFileASCII(target_pcd_filepath, *cloud_bounded) != -1);
@@ -1307,6 +1307,6 @@ namespace cam_lidar_calibration
 
     bool FeatureExtractor::initialized() const
     {
-        return not lidar_frame_.empty();
+        return not lidar_frame_.empty() and valid_camera_info_;
     }
 }  // namespace cam_lidar_calibration

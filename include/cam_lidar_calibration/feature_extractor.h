@@ -64,9 +64,10 @@ namespace cam_lidar_calibration
         void passthrough(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &input_pc,
                          pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
 
-        std::tuple<std::vector<cv::Point3d>, cv::Mat> locateChessboard(const cv_bridge::CvImageConstPtr &cv_ptr);
+        std::tuple<std::vector<cv::Point3d>, cv::Mat> extractChessboard(const cv_bridge::CvImageConstPtr &cv_pt);
 
-        auto chessboardProjection(const std::vector<cv::Point2d> &corners, const cv_bridge::CvImageConstPtr &cv_ptr);
+        auto chessboardProjection(const std::vector<cv::Point2d> &corners,
+                                  const cv_bridge::CvImageConstPtr &cv_ptr);
 
         void publishBoardPointCloud();
 
@@ -76,10 +77,11 @@ namespace cam_lidar_calibration
         std::pair<pcl::ModelCoefficients, pcl::ModelCoefficients>
         findEdges(const pcl::PointCloud<pcl::PointXYZIR>::Ptr &edge_pair_cloud);
 
-        void callback_camerainfo(const sensor_msgs::CameraInfo::ConstPtr &msg);
+        void setCameraInfo(const sensor_msgs::CameraInfo::ConstPtr &msg);
 
         void distoffsetPassthrough(const pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &input_pc,
-                                   pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
+                              pcl::PointCloud<pcl::PointXYZIR>::Ptr &output_pc);
+
         bool getLastCloud(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &out);
 
         bool getLastData(pcl::PointCloud<pcl::PointXYZIR>::ConstPtr &pc_out, cv_bridge::CvImageConstPtr &img_out);
@@ -106,19 +108,18 @@ namespace cam_lidar_calibration
         std::shared_ptr<pc_sub_type> pc_sub_;
         std::shared_ptr<message_filters::Synchronizer<ImageLidarSyncPolicy>> image_pc_sync_;
         int num_samples_;
+        bool valid_camera_info_;
         std::vector<pcl::PointCloud<pcl::PointXYZIR>::Ptr> pc_samples_;
         ros::Publisher board_cloud_pub_, bounded_cloud_pub_;
         ros::Publisher samples_pub_;
         image_transport::Publisher image_publisher_;
         ros::ServiceServer optimise_service_;
-        ros::Subscriber camera_info_sub_;
         boost::shared_ptr<image_transport::ImageTransport> it_;
         boost::shared_ptr<image_transport::ImageTransport> it_p_;
         boost::shared_ptr<dynamic_reconfigure::Server<cam_lidar_calibration::boundsConfig>> server;
         std::string curdatetime_;
         fs::path output_path_;
         fs::path newdatafolder_;
-        bool valid_camera_info; // TODO
         CustomNodeHandle private_nh_;
         ros::NodeHandle public_nh_;
     };
