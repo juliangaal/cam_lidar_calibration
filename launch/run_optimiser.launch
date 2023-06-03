@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 
-<!-- roslaunch cam_lidar_calibration run_optimiser.launch import_samples:=false -->
+<!-- roslaunch cam_lidar_calibration run_optimiser.launch [import_samples:=false] -->
 
 <launch>
 
 	<rosparam file="$(find cam_lidar_calibration)/cfg/params.yaml" />
-	
+
+	<arg name="import_samples" default="false"/>
+
   	<node pkg="cam_lidar_calibration" type="feature_extraction_node" name="feature_extraction" output="screen">
 		<param name="num_lowestvoq" type="int" value="50" />
 		<param name="queue_rate" type="int" value="10" />
