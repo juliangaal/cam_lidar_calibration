@@ -116,6 +116,10 @@ if __name__ == '__main__':
 
 	# Initial filtering of general outliers
 	params = ['roll','pitch','yaw','x','y','z']
+
+	if not all(key in df.columns for key in params):
+		raise Exception("CSV file malformed! Require keys ", params)
+
 	for p in params:
 		df = df[(np.abs(stats.zscore(df[p])) < initial_fthresh)]
 

@@ -54,7 +54,7 @@ namespace cam_lidar_calibration
 
         optimiser_ = std::make_shared<Optimiser>(i_params_);
         ROS_INFO("Input parameters loaded");
-        
+
         // Create folder for output if it does not exist
         curdatetime_ = getDateTime();
         
@@ -80,6 +80,7 @@ namespace cam_lidar_calibration
                 ROS_INFO_STREAM("Data save folder created at " << data_dir);
             }
             data_path_ = data_dir / curdatetime_;
+            ROS_ASSERT_MSG(!fs::exists(data_path_), "Data path can't exist! Please delete or rename");
             ROS_INFO_STREAM("Saving data in " << data_path_);
         }
 
@@ -163,21 +164,34 @@ namespace cam_lidar_calibration
                 if (*flag_ == Optimise::Request::CAPTURE)
                 {
                     ROS_WARN("Still working with last sample!");
-                } else
+                }
+                else
                 {
                     ROS_INFO("Capturing sample");
                 }
                 break;
             case Optimise::Request::DISCARD:
-                ROS_INFO("Discarding last sample");
-                if (not optimiser_->samples.empty()) // TODO thread safety
+                if (*flag_ == Optimise::Request::CAPTURE)
                 {
-                    num_samples_--;
-                    last_normal_ = cv::Mat{};
-                    optimiser_->samples.pop_back();
-                    if (not pc_samples_.empty())
+                    ROS_WARN("Still working with last sample! Not discarding. Try again later.");
+                }
+                else
+                {
+                    if (not optimiser_->samples.empty())
                     {
-                        pc_samples_.pop_back();
+                        optimiser_->samples.pop_back();
+
+                        if (not pc_samples_.empty())
+                        {
+                            pc_samples_.pop_back();
+                        }
+                        last_normal_ = cv::Mat{0, 0, -1};
+
+                        ROS_INFO("Discarded last sample. %ld samples left", optimiser_->samples.size());
+                    }
+                    else
+                    {
+                        ROS_WARN_STREAM("Nothing to discard. No samples (left).");
                     }
                 }
                 break;
@@ -301,7 +315,7 @@ namespace cam_lidar_calibration
         }
         if (optimiser_->samples.size() < 3)
         {
-            ROS_ERROR("Less than 3 samples captured or imported.");
+            ROS_FATAL("Less than 3 samples captured or imported.");
             return;
         }
 
@@ -430,8 +444,17 @@ namespace cam_lidar_calibration
         ROS_INFO_STREAM(optimiser_->top_sets.size() << " selected sets for optimisation");
         ROS_INFO_STREAM("Time taken: " << timer_assess.toc() << "s ");
 
-        auto calibration_path = data_path_ / ("calibration_" + curdatetime + ".csv");
-        ROS_INFO_STREAM("Calibration results will be saved at: " << calibration_path);
+        auto calibration_path = data_path_ / "calibration.csv";
+        if (fs::exists(calibration_path))
+        {
+            auto temp = calibration_path;
+            calibration_path = data_path_ / ("calibration" + curdatetime_ + ".csv");
+            ROS_WARN_STREAM("Calibration file " << temp << " exists. Writing to " << calibration_path << "instead");
+        }
+        else
+        {
+            ROS_INFO_STREAM("Calibration results will be saved at: " << calibration_path);
+        }
         
         std::ofstream output_csv;
         output_csv.open(calibration_path.string(), std::ios_base::out | std::ios_base::trunc);
@@ -939,7 +962,7 @@ namespace cam_lidar_calibration
             lidar_frame_ = pointcloud->header.frame_id;
         }
 
-        ROS_INFO_STREAM_THROTTLE(1, "Receiving data");
+        ROS_INFO_STREAM_THROTTLE(1, "Receiving synced cam/lidar data");
         setLastData(pointcloud, image);
     }
 
@@ -976,7 +999,7 @@ namespace cam_lidar_calibration
                 return;
             }
 
-            if (num_samples_ > 0 && cv::countNonZero(chessboard_normal - last_normal_) == 0)
+            if (optimiser_->samples.size() > 0 && cv::countNonZero(chessboard_normal - last_normal_) == 0)
             {
                 *flag_ = Optimise::Request::READY;
                 ROS_WARN_STREAM("Not adding duplicate data. Listening for new data.");
@@ -1033,9 +1056,10 @@ namespace cam_lidar_calibration
                 ROS_INFO("Ready for capture");
                 return;
             }
-            
+
+            auto num_samples = optimiser_->samples.size();
             cam_lidar_calibration::OptimisationSample sample;
-            sample.sample_num = num_samples_;
+            sample.sample_num = num_samples;
             sample.camera_centre = corner_vectors[4];  // Centre of board
             corner_vectors.pop_back();
             sample.camera_corners = corner_vectors;
@@ -1144,12 +1168,11 @@ namespace cam_lidar_calibration
 
             ROS_INFO("Found line coefficients and outlined chessboard");
             last_normal_ = chessboard_normal;
-            num_samples_++;
             pc_samples_.push_back(cloud_projected);
             publishBoardPointCloud();
             publishChessboard();
 
-            printf("\n--- Sample %d ---\n", num_samples_);
+            printf("\n--- Sample %d ---\n", num_samples);
             printf("Measured board has: dimensions = %dx%d mm; area = %6.5f m^2\n", i_params_.board_dimensions.width,
                    i_params_.board_dimensions.height, gt_area);
             printf("Distance = %5.2f m\n", sample.distance_from_origin);
@@ -1170,7 +1193,7 @@ namespace cam_lidar_calibration
                 ROS_INFO_STREAM("Save data folder created at " << data_path_);
             }
 
-            auto num_samples_str = std::to_string(num_samples_);
+            auto num_samples_str = std::to_string(num_samples);
             fs::path img_filepath = data_path_ / "images" / ("pose" + num_samples_str + ".png");
             fs::path target_pcd_filepath = data_path_ / "pcd" / ("pose" + num_samples_str + "_target.pcd");
             fs::path full_pcd_filepath = data_path_ / "pcd" / ("pose" + num_samples_str + "_full.pcd");
@@ -1180,7 +1203,7 @@ namespace cam_lidar_calibration
             ROS_ASSERT(pcl::io::savePCDFileASCII(full_pcd_filepath, *pointcloud) != -1);
             ROS_INFO_STREAM("Image and pcd file saved");
             
-            if (num_samples_ == 1)
+            if (num_samples == 0)
             {
                 // Check if save_dir has camera_info topic saved
                 
@@ -1211,8 +1234,8 @@ namespace cam_lidar_calibration
 
             // Push this sample to the optimiser
             optimiser_->samples.push_back(sample);
+            ROS_INFO("Camptured sample #%ld. Ready for capture\n", num_samples);
             *flag_ = Optimise::Request::READY;  // Reset the capture flag
-            ROS_INFO("Ready for capture\n");
         }  // if (*flag_ == Optimise::Request::CAPTURE)
     }  // End of extractRegionOfInterest
 

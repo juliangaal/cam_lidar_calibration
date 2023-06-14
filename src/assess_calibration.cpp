@@ -165,7 +165,6 @@ namespace cam_lidar_calibration
             ROS_ASSERT(nh_.NodeHandle::getParam("visualise_pose_num", visualise_pose_num));
             ROS_ASSERT(nh_.NodeHandle::getParam("visualise", visualise));
             ROS_ASSERT(nh_.getParam("csv", csv));
-            ROS_ASSERT(nh_.getParam("save", save));
 
             data_dir = csv.parent_path();
 

@@ -97,7 +97,6 @@ namespace cam_lidar_calibration
         void publishChessboard() const;
     private:
         double meter_per_pixel_cbdiag_ {0};
-        int num_samples_ {0};
         bool valid_camera_info_ {false};
         CustomNodeHandle private_nh_ {"~"};
         ros::NodeHandle public_nh_ {};
