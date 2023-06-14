@@ -11,38 +11,38 @@ namespace cam_lidar_calibration
 
     struct initial_parameters_t
     {
-        initial_parameters_t()
-        : fisheye_model(false)
-        , lidar_ring_count(0)
-        {}
+        initial_parameters_t() = default;
         ~initial_parameters_t() = default;
 
-        bool fisheye_model;
-        int lidar_ring_count;
+        bool fisheye_model {false};
+        int lidar_ring_count {0};
+        int square_length {0};
+        cv::Mat cameramat = cv::Mat::zeros(3, 3, CV_64F);
+        cv::Mat distcoeff = cv::Mat::eye(1, 4, CV_64F);
+        
         cv::Size chessboard_pattern_size;
-        int square_length;                 // in millimetres
+        std::string camera_topic;
+        std::string camera_info;
+        std::string lidar_topic;
         cv::Size board_dimensions;         // in millimetres
         cv::Point3d cb_translation_error;  // in millimetres
-        cv::Mat cameramat, distcoeff;
         std::pair<int, int> image_size;  // in pixels
-        std::string camera_topic, camera_info, lidar_topic;
+        
+        void load(const ros::NodeHandle& n);
     };
 
     struct fixed_parameters_t
     {
         fixed_parameters_t() = default;
         ~fixed_parameters_t() = default;
+        
+        bool import_samples {false};
+        int queue_rate {20};
+        size_t num_lowestvoq {0};
+        double distance_offset {0};
         fs::path import_path;
-        bool import_samples;
-        int queue_rate;
-        size_t num_lowestvoq;
-        double distance_offset;
+        void load(const CustomNodeHandle& n);
     };
-
-    void loadParams(const ros::NodeHandle& n, initial_parameters_t& i_params);
-
-    void loadParams(const CustomNodeHandle& n, fixed_parameters_t& f_params);
-
 }  // namespace cam_lidar_calibration
 
 #endif

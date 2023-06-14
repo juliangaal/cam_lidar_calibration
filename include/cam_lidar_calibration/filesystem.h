@@ -21,4 +21,15 @@ namespace fs = boost::filesystem;
 #error "No filesystem support"
 #endif
 
+namespace cam_lidar_calibration
+{
+
+    inline std::size_t number_of_files_in_directory(const fs::path& path)
+    {
+        return (std::size_t) std::distance(fs::directory_iterator{path},
+                                           fs::directory_iterator{});
+    }
+
+}
+
 #endif //src_filesystem_h

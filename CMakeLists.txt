@@ -39,6 +39,7 @@ include_directories(
   ${PCL_INCLUDE_DIRS}
   )
 
+
 link_directories(${catkin_LIBRARY_DIRS} ${PCL_LIBRARY_DIRS})
 
 add_definitions(-DQT_NO_KEYWORDS)
@@ -68,15 +69,15 @@ generate_dynamic_reconfigure_options(
   )
 
 catkin_package(
-  INCLUDE_DIRS include
-  CATKIN_DEPENDS nodelet
-  roscpp
-  rospy
-  std_msgs
-  sensor_msgs
-  message_runtime
-#    libutransform
-  )
+        INCLUDE_DIRS include
+        CATKIN_DEPENDS nodelet
+        roscpp
+        rospy
+        std_msgs
+        sensor_msgs
+        message_runtime
+        #    libutransform
+)
 
 add_library(cam_lidar_calibration
         src/cam_lidar_panel.cpp
